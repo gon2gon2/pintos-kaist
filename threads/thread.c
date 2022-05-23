@@ -1,3 +1,4 @@
+// #include "../include/threads/thread.h"
 #include "threads/thread.h"
 #include <debug.h>
 #include <stddef.h>
@@ -28,6 +29,9 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* Lisf of processes in THREAD_BLOCKED state */
+static struct list sleep_list;
+
 /* Idle thread. */
 static struct thread *idle_thread;
 
@@ -48,6 +52,7 @@ static long long user_ticks;    /* # of timer ticks in user programs. */
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /* # of timer ticks since last yield. */
+static unsigned next_tick_to_awake; /* # of timer ticks of sleeping threads */
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -62,7 +67,6 @@ static void init_thread (struct thread *, const char *name, int priority);
 static void do_schedule(int status);
 static void schedule (void);
 static tid_t allocate_tid (void);
-
 /* Returns true if T appears to point to a valid thread. */
 #define is_thread(t) ((t) != NULL && (t)->magic == THREAD_MAGIC)
 
@@ -108,6 +112,7 @@ thread_init (void) {
 	/* Init the globla thread context */
 	lock_init (&tid_lock);
 	list_init (&ready_list);
+	list_init (&sleep_list);
 	list_init (&destruction_req);
 
 	/* Set up a thread structure for the running thread. */
@@ -115,6 +120,67 @@ thread_init (void) {
 	init_thread (initial_thread, "main", PRI_DEFAULT);
 	initial_thread->status = THREAD_RUNNING;
 	initial_thread->tid = allocate_tid ();
+}
+
+/* thread sleep */
+void thread_sleep(int64_t ticks) {
+	struct thread *curr = thread_current ();  
+	enum intr_level old_level;
+	ASSERT (!intr_context ());
+
+	old_level = intr_disable ();
+	ASSERT(curr != idle_thread);
+
+	curr->status = THREAD_BLOCKED;
+	curr->wakeup_tick = ticks;
+	
+	list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL); // 플래그 돌려놔야되니 if로 변경
+	list_remove(&curr);
+	update_next_tick_to_awake(ticks);
+	intr_set_level (old_level);
+}
+
+bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux){
+	return list_entry(a, struct thread, elem)->wakeup_tick 
+		< list_entry(b, struct thread, elem)->wakeup_tick;
+}
+
+void thread_awake(int64_t ticks){ // sleep에선 필요한데 awake에선 필요 X, block에서 해줌.
+	// ASSERT intr == INTR_OFF
+	struct list_elem *e;
+	struct list_elem *end = list_end(&sleep_list);
+	enum intr_level old_level;
+	// 1. sleep list의 처음부터 확인한다.
+	//	- entrypoint 활용
+	e = list_begin(&sleep_list);
+
+	old_level = intr_disable();
+	// 2. end에 닿거나 min보다 커질 때까지 ㄱㄱ
+	while (e != end){		
+		struct thread *t = list_entry(e, struct thread, elem);
+
+		if (ticks < (t->wakeup_tick)) {
+			update_next_tick_to_awake(t->wakeup_tick);
+			break;
+		}
+		
+		// 제거하고 list에 추가
+		e = list_remove(&t->elem);
+		t->status = THREAD_READY;
+		list_push_back(&ready_list, e);
+
+	}
+	intr_set_level (old_level);
+
+}
+
+int64_t get_next_tick_to_awake(void){
+	return next_tick_to_awake;
+}
+
+void
+update_next_tick_to_awake (int64_t ticks) {
+	next_tick_to_awake = (next_tick_to_awake > ticks) ? ticks : next_tick_to_awake;
 }
 
 /* Starts preemptive thread scheduling by enabling interrupts.
@@ -209,7 +275,6 @@ thread_create (const char *name, int priority,
 
 	return tid;
 }
-
 /* Puts the current thread to sleep.  It will not be scheduled
    again until awoken by thread_unblock().
 
@@ -307,7 +372,6 @@ thread_yield (void) {
 	do_schedule (THREAD_READY);
 	intr_set_level (old_level);
 }
-
 /* Sets the current thread's priority to NEW_PRIORITY. */
 void
 thread_set_priority (int new_priority) {
