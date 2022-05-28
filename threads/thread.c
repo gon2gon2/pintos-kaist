@@ -29,8 +29,10 @@
    that are ready to run but not actually running. */
 static struct list ready_list;
 
+/* Project 1 - alarm clock */
 /* Lisf of processes in THREAD_BLOCKED state */
 static struct list sleep_list;
+static unsigned next_tick_to_awake; /* # of timer ticks of sleeping threads */
 
 /* Idle thread. */
 static struct thread *idle_thread;
@@ -52,7 +54,6 @@ static long long user_ticks;    /* # of timer ticks in user programs. */
 /* Scheduling. */
 #define TIME_SLICE 4            /* # of timer ticks to give each thread. */
 static unsigned thread_ticks;   /* # of timer ticks since last yield. */
-static unsigned next_tick_to_awake; /* # of timer ticks of sleeping threads */
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.
@@ -128,49 +129,61 @@ void thread_sleep(int64_t ticks) {
 	enum intr_level old_level;
 	ASSERT (!intr_context ());
 
-	old_level = intr_disable ();
-	ASSERT(curr != idle_thread);
+	if (curr != idle_thread){
+		old_level = intr_disable ();
 
-	curr->status = THREAD_BLOCKED;
-	curr->wakeup_tick = ticks;
-	
-	list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL); // 플래그 돌려놔야되니 if로 변경
-	list_remove(&curr);
-	update_next_tick_to_awake(ticks);
-	intr_set_level (old_level);
+		thread_block();
+		curr->wakeup_tick = ticks;
+		list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL); 
+		update_next_tick_to_awake(ticks);
+		schedule();
+
+		intr_set_level (old_level);
+	}
 }
+
+// void thread_sleep(int64_t ticks) {
+// 	ASSERT (!intr_context ());
+	
+// 	struct thread *curr = thread_current ();
+// 	enum intr_level old_level;
+	
+// 	old_level = intr_disable ();
+	
+// 	if (curr != idle_thread) {
+// 		curr->wakeup_tick = ticks + timer_ticks();
+// 		list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL);
+// 	}
+
+// 	thread_block();
+// 	intr_set_level (old_level);
+// }
 
 bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux){
 	return list_entry(a, struct thread, elem)->wakeup_tick 
 		< list_entry(b, struct thread, elem)->wakeup_tick;
 }
 
-void thread_awake(int64_t ticks){ // sleep에선 필요한데 awake에선 필요 X, block에서 해줌.
-	// ASSERT intr == INTR_OFF
-	struct list_elem *e;
-	struct list_elem *end = list_end(&sleep_list);
-	enum intr_level old_level;
-	// 1. sleep list의 처음부터 확인한다.
-	//	- entrypoint 활용
-	e = list_begin(&sleep_list);
+void thread_awake(int64_t ticks){
+	ASSERT(intr_get_level () == INTR_OFF);
+	struct list_elem *now_elem = list_begin(&sleep_list);
+	struct list_elem *end_elem = list_end(&sleep_list);
+	struct thread *now_thread;
+	while (now_elem != end_elem) {
+		now_thread = list_entry(now_elem, struct thread, elem);
+		if  (now_thread->wakeup_tick <= ticks) {
 
-	old_level = intr_disable();
-	// 2. end에 닿거나 min보다 커질 때까지 ㄱㄱ
-	while (e != end){		
-		struct thread *t = list_entry(e, struct thread, elem);
-
-		if (ticks < (t->wakeup_tick)) {
-			update_next_tick_to_awake(t->wakeup_tick);
+			now_elem = list_remove(now_elem);
+			thread_unblock(now_thread);
+			// push_back 안 해줘도 됨?
+			// list_push_back(&ready_list, &now_thread->elem);
+			// thread_unblock(now_thread);
+		}
+		else {
 			break;
 		}
-		
-		// 제거하고 list에 추가
-		e = list_remove(&t->elem);
-		t->status = THREAD_READY;
-		list_push_back(&ready_list, e);
-
 	}
-	intr_set_level (old_level);
+
 
 }
 
