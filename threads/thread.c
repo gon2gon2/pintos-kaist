@@ -125,9 +125,9 @@ thread_init (void) {
 
 /* thread sleep */
 void thread_sleep(int64_t ticks) {
+	ASSERT (!intr_context ());
 	struct thread *curr = thread_current ();  
 	enum intr_level old_level;
-	ASSERT (!intr_context ());
 
 	if (curr != idle_thread){
 		old_level = intr_disable ();
@@ -136,28 +136,12 @@ void thread_sleep(int64_t ticks) {
 		curr->wakeup_tick = ticks;
 		list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL); 
 		update_next_tick_to_awake(ticks);
-		schedule();
+		// schedule();
 
 		intr_set_level (old_level);
 	}
 }
 
-// void thread_sleep(int64_t ticks) {
-// 	ASSERT (!intr_context ());
-	
-// 	struct thread *curr = thread_current ();
-// 	enum intr_level old_level;
-	
-// 	old_level = intr_disable ();
-	
-// 	if (curr != idle_thread) {
-// 		curr->wakeup_tick = ticks + timer_ticks();
-// 		list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL);
-// 	}
-
-// 	thread_block();
-// 	intr_set_level (old_level);
-// }
 
 bool compare_tick (const struct list_elem *a, const struct list_elem *b, void *aux){
 	return list_entry(a, struct thread, elem)->wakeup_tick 
@@ -171,15 +155,15 @@ void thread_awake(int64_t ticks){
 	struct thread *now_thread;
 	while (now_elem != end_elem) {
 		now_thread = list_entry(now_elem, struct thread, elem);
-		if  (now_thread->wakeup_tick <= ticks) {
 
-			now_elem = list_remove(now_elem);
+		if  (now_thread->wakeup_tick <= ticks) {
+			// now_elem = list_remove(now_elem);
+			now_elem = list_remove(&now_thread->elem);
 			thread_unblock(now_thread);
-			// push_back 안 해줘도 됨?
-			// list_push_back(&ready_list, &now_thread->elem);
-			// thread_unblock(now_thread);
 		}
+
 		else {
+			update_next_tick_to_awake(now_thread->wakeup_tick);
 			break;
 		}
 	}
