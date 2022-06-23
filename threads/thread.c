@@ -126,20 +126,18 @@ thread_init (void) {
 /* thread sleep */
 void thread_sleep(int64_t ticks) {
 	ASSERT (!intr_context ());
-	struct thread *curr = thread_current ();  
 	enum intr_level old_level;
+	old_level = intr_disable();
+	struct thread *curr = thread_current();	
+
 
 	if (curr != idle_thread){
-		old_level = intr_disable ();
-
-		thread_block();
-		curr->wakeup_tick = ticks;
+		thread_block(); 	// block을 먼저하면? TIMEOUT
+		update_next_tick_to_awake(curr->wakeup_tick = ticks);
 		list_insert_ordered(&sleep_list, &curr->elem, compare_tick, NULL); 
-		update_next_tick_to_awake(ticks);
-		// schedule();
-
-		intr_set_level (old_level);
 	}
+
+	intr_set_level (old_level);
 }
 
 
@@ -157,11 +155,9 @@ void thread_awake(int64_t ticks){
 		now_thread = list_entry(now_elem, struct thread, elem);
 
 		if  (now_thread->wakeup_tick <= ticks) {
-			// now_elem = list_remove(now_elem);
-			now_elem = list_remove(&now_thread->elem);
+			now_elem = list_remove(now_elem);
 			thread_unblock(now_thread);
 		}
-
 		else {
 			update_next_tick_to_awake(now_thread->wakeup_tick);
 			break;
